@@ -63,6 +63,30 @@ class TopicWithStatusOut(BaseModel):
     last_result: LastResultOut | None
 
 
+class TestResultIn(BaseModel):
+    topic_id: int
+    score: float
+    flagged_by_user: bool = False
+
+
+class TestResultOut(BaseModel):
+    id: int
+    topic_id: int
+    user_id: int
+    score: float
+    flagged_by_user: bool
+    timestamp: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
+class QuestionOut(BaseModel):
+    question: str
+    options: list[str]
+    correct_index: int
+    explanation: str
+
+
 class _TopicSuggestion(BaseModel):
     name: str
     often_on_exam: bool
@@ -73,6 +97,23 @@ class _TopicList(BaseModel):
 
 
 # ---------- Endpoints ----------
+
+@app.post("/test-results", response_model=TestResultOut, status_code=201, responses={404: {"description": "Topic not found"}})
+def create_test_result(body: TestResultIn, db: DB):
+    if not db.get(Topic, body.topic_id):
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    result = TestResult(
+        topic_id=body.topic_id,
+        user_id=HARDCODED_USER_ID,
+        score=body.score,
+        flagged_by_user=body.flagged_by_user,
+    )
+    db.add(result)
+    db.commit()
+    db.refresh(result)
+    return result
+
 
 @app.post("/subjects", response_model=SubjectOut, status_code=201)
 def create_subject(body: SubjectIn, db: DB):
@@ -120,6 +161,34 @@ def generate_topics(subject_id: int, db: DB):
         db.refresh(t)
 
     return topics
+
+
+@app.post("/topics/{topic_id}/generate-question", response_model=QuestionOut, responses={404: {"description": "Topic not found"}})
+def generate_question(topic_id: int, db: DB):
+    topic = db.get(Topic, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    subject = db.get(Subject, topic.subject_id)
+
+    prompt = (
+        f"Du er en pedagogisk assistent som lager eksamensoppgaver.\n"
+        f"Emne: {subject.name}\n"
+        f"Tema: {topic.name}\n\n"
+        "Lag ett flervalgsspørsmål med fire svaralternativer. Kun ett alternativ er riktig.\n"
+        "Returner kun JSON i dette formatet:\n"
+        '{"question": "...", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "..."}\n'
+        "correct_index er 0-basert indeks for det riktige alternativet."
+    )
+
+    message = _anthropic.messages.create(
+        model=LLM_MODEL,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return QuestionOut.model_validate_json(raw)
 
 
 @app.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})
