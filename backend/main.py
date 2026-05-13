@@ -87,6 +87,10 @@ class QuestionOut(BaseModel):
     explanation: str
 
 
+class TestResultFlagIn(BaseModel):
+    flagged_by_user: bool
+
+
 class _TopicSuggestion(BaseModel):
     name: str
     often_on_exam: bool
@@ -110,6 +114,21 @@ def create_test_result(body: TestResultIn, db: DB):
         flagged_by_user=body.flagged_by_user,
     )
     db.add(result)
+    db.commit()
+    db.refresh(result)
+    return result
+
+
+@app.patch("/test-results/{result_id}", response_model=TestResultOut, responses={404: {"description": "TestResult not found"}})
+def flag_test_result(result_id: int, body: TestResultFlagIn, db: DB):
+    result = db.get(TestResult, result_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="TestResult not found")
+
+    result.flagged_by_user = body.flagged_by_user
+    if body.flagged_by_user:
+        result.score = 1.0
+
     db.commit()
     db.refresh(result)
     return result
