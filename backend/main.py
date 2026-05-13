@@ -1,3 +1,4 @@
+import datetime
 import os
 from datetime import date
 from typing import Annotated
@@ -5,10 +6,11 @@ from typing import Annotated
 import anthropic
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Subject, Topic
+from models import Subject, TestResult, Topic
 
 DB = Annotated[Session, Depends(get_db)]
 
@@ -43,6 +45,22 @@ class TopicOut(BaseModel):
     often_on_exam: bool
 
     model_config = {"from_attributes": True}
+
+
+class LastResultOut(BaseModel):
+    score: float
+    flagged_by_user: bool
+    timestamp: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TopicWithStatusOut(BaseModel):
+    id: int
+    name: str
+    subject_id: int
+    often_on_exam: bool
+    last_result: LastResultOut | None
 
 
 class _TopicSuggestion(BaseModel):
@@ -84,15 +102,70 @@ def generate_topics(subject_id: int, db: DB):
         messages=[{"role": "user", "content": prompt}],
     )
 
-    parsed = _TopicList.model_validate_json(message.content[0].text)
+    raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    parsed = _TopicList.model_validate_json(raw)
 
     topics = [
         Topic(name=s.name, often_on_exam=s.often_on_exam, subject_id=subject_id)
         for s in parsed.topics
     ]
+
+    existing = db.query(Topic).filter(Topic.subject_id == subject_id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Topics already generated for this subject")
+
     db.add_all(topics)
     db.commit()
     for t in topics:
         db.refresh(t)
 
     return topics
+
+
+@app.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})
+def get_topics(subject_id: int, db: DB):
+    if not db.get(Subject, subject_id):
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    topics = db.scalars(select(Topic).where(Topic.subject_id == subject_id)).all()
+
+    # One query: latest TestResult per topic for this user
+    max_ts_subq = (
+        select(TestResult.topic_id, func.max(TestResult.timestamp).label("max_ts"))
+        .where(TestResult.user_id == HARDCODED_USER_ID)
+        .group_by(TestResult.topic_id)
+        .subquery()
+    )
+    latest_rows = db.scalars(
+        select(TestResult).join(
+            max_ts_subq,
+            (TestResult.topic_id == max_ts_subq.c.topic_id)
+            & (TestResult.timestamp == max_ts_subq.c.max_ts),
+        )
+    ).all()
+    latest_by_topic: dict[int, TestResult] = {r.topic_id: r for r in latest_rows}
+
+    _epoch = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+    def _sort_key(topic: Topic) -> tuple[int, datetime.datetime]:
+        result = latest_by_topic.get(topic.id)
+        if result is None:
+            return (0, _epoch)
+        if result.score == 0:
+            return (1, result.timestamp)
+        if result.flagged_by_user:
+            return (2, result.timestamp)
+        return (3, result.timestamp)
+
+    sorted_topics = sorted(topics, key=_sort_key)
+
+    return [
+        TopicWithStatusOut(
+            id=t.id,
+            name=t.name,
+            subject_id=t.subject_id,
+            often_on_exam=t.often_on_exam,
+            last_result=latest_by_topic.get(t.id),
+        )
+        for t in sorted_topics
+    ]
