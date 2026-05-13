@@ -1,7 +1,16 @@
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import HomePage from './pages/HomePage'
+import TestPage from './pages/TestPage'
+import TopicsPage from './pages/TopicsPage'
+
 export default function App() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <h1 className="text-2xl font-bold p-8">StudyMap</h1>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/subjects/:id/topics" element={<TopicsPage />} />
+        <Route path="/subjects/:id/test" element={<TestPage />} />
+      </Routes>
+    </BrowserRouter>
   )
 }

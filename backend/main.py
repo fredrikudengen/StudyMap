@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated
 
 import anthropic
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -15,11 +15,14 @@ from models import Subject, TestResult, Topic
 DB = Annotated[Session, Depends(get_db)]
 
 app = FastAPI(title="StudyMap API")
+router = APIRouter(prefix="/api")
 
 HARDCODED_USER_ID = 1
 LLM_MODEL = "claude-sonnet-4-20250514"
 
 _anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+app.include_router(router)
 
 
 # ---------- Schemas ----------
@@ -102,7 +105,7 @@ class _TopicList(BaseModel):
 
 # ---------- Endpoints ----------
 
-@app.post("/test-results", response_model=TestResultOut, status_code=201, responses={404: {"description": "Topic not found"}})
+@router.post("/test-results", response_model=TestResultOut, status_code=201, responses={404: {"description": "Topic not found"}})
 def create_test_result(body: TestResultIn, db: DB):
     if not db.get(Topic, body.topic_id):
         raise HTTPException(status_code=404, detail="Topic not found")
@@ -119,7 +122,7 @@ def create_test_result(body: TestResultIn, db: DB):
     return result
 
 
-@app.patch("/test-results/{result_id}", response_model=TestResultOut, responses={404: {"description": "TestResult not found"}})
+@router.patch("/test-results/{result_id}", response_model=TestResultOut, responses={404: {"description": "TestResult not found"}})
 def flag_test_result(result_id: int, body: TestResultFlagIn, db: DB):
     result = db.get(TestResult, result_id)
     if not result:
@@ -134,7 +137,7 @@ def flag_test_result(result_id: int, body: TestResultFlagIn, db: DB):
     return result
 
 
-@app.post("/subjects", response_model=SubjectOut, status_code=201)
+@router.post("/subjects", response_model=SubjectOut, status_code=201)
 def create_subject(body: SubjectIn, db: DB):
     subject = Subject(name=body.name, exam_date=body.exam_date, user_id=HARDCODED_USER_ID)
     db.add(subject)
@@ -143,7 +146,7 @@ def create_subject(body: SubjectIn, db: DB):
     return subject
 
 
-@app.post("/subjects/{subject_id}/generate-topics", response_model=list[TopicOut], status_code=201, responses={404: {"description": "Subject not found"}})
+@router.post("/subjects/{subject_id}/generate-topics", response_model=list[TopicOut], status_code=201, responses={404: {"description": "Subject not found"}})
 def generate_topics(subject_id: int, db: DB):
     subject = db.get(Subject, subject_id)
     if not subject:
@@ -182,7 +185,7 @@ def generate_topics(subject_id: int, db: DB):
     return topics
 
 
-@app.post("/topics/{topic_id}/generate-question", response_model=QuestionOut, responses={404: {"description": "Topic not found"}})
+@router.post("/topics/{topic_id}/generate-question", response_model=QuestionOut, responses={404: {"description": "Topic not found"}})
 def generate_question(topic_id: int, db: DB):
     topic = db.get(Topic, topic_id)
     if not topic:
@@ -210,7 +213,7 @@ def generate_question(topic_id: int, db: DB):
     return QuestionOut.model_validate_json(raw)
 
 
-@app.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})
+@router.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})
 def get_topics(subject_id: int, db: DB):
     if not db.get(Subject, subject_id):
         raise HTTPException(status_code=404, detail="Subject not found")
