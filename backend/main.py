@@ -1,16 +1,19 @@
 import datetime
+import io
+import json
 import os
 from datetime import date
 from typing import Annotated
 
 import anthropic
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
+from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Subject, TestResult, Topic
+from models import Subject, TestResult, Topic, TopicDependency
 
 DB = Annotated[Session, Depends(get_db)]
 
@@ -114,6 +117,16 @@ class _TopicSuggestion(BaseModel):
 
 class _TopicList(BaseModel):
     topics: list[_TopicSuggestion]
+
+
+class _DepPair(BaseModel):
+    from_topic_id: int
+    to_topic_id: int
+
+
+class _ExamAnalysis(BaseModel):
+    often_on_exam_ids: list[int]
+    dependencies: list[_DepPair]
 
 
 # ---------- Endpoints ----------
@@ -258,6 +271,68 @@ def generate_topics(subject_id: int, db: DB):
         db.refresh(t)
 
     return topics
+
+
+@router.post("/subjects/{subject_id}/analyze-exam", status_code=200, responses={404: {"description": "Subject not found"}, 400: {"description": "Bad request"}})
+async def analyze_exam(subject_id: int, db: DB, file: UploadFile = File(...)):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    topics = db.scalars(select(Topic).where(Topic.subject_id == subject_id)).all()
+    if not topics:
+        raise HTTPException(status_code=400, detail="No topics found for this subject")
+
+    content = await file.read()
+    reader = PdfReader(io.BytesIO(content))
+    exam_text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    if not exam_text:
+        raise HTTPException(status_code=400, detail="Could not extract text from PDF")
+
+    topics_json = json.dumps([{"id": t.id, "name": t.name} for t in topics], ensure_ascii=False)
+
+    prompt = (
+        f"Du analyserer en gammel eksamen for emnet '{subject.name}'.\n\n"
+        f"Eksisterende temaer:\n{topics_json}\n\n"
+        f"Eksamenstekst (utdrag):\n{exam_text[:6000]}\n\n"
+        "Gjør to ting:\n"
+        "1. Identifiser hvilke av de eksisterende temaene som forekommer i eksamenen — returner ID-ene i 'often_on_exam_ids'.\n"
+        "2. Identifiser avhengigheter mellom temaene. En avhengighet betyr at forståelse av 'from_topic_id' "
+        "krever forståelse av 'to_topic_id'. Bruk kun ID-er fra listen over.\n\n"
+        "Returner kun JSON:\n"
+        '{"often_on_exam_ids": [1, 2], "dependencies": [{"from_topic_id": 3, "to_topic_id": 1}]}'
+    )
+
+    message = _anthropic.messages.create(
+        model=LLM_MODEL,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    analysis = _ExamAnalysis.model_validate_json(raw)
+
+    valid_ids = {t.id for t in topics}
+
+    for topic in topics:
+        if topic.id in analysis.often_on_exam_ids:
+            topic.often_on_exam = True
+
+    existing_deps = db.scalars(
+        select(TopicDependency).where(TopicDependency.from_topic_id.in_(valid_ids))
+    ).all()
+    existing_pairs = {(d.from_topic_id, d.to_topic_id) for d in existing_deps}
+
+    for dep in analysis.dependencies:
+        if (dep.from_topic_id in valid_ids
+                and dep.to_topic_id in valid_ids
+                and dep.from_topic_id != dep.to_topic_id
+                and (dep.from_topic_id, dep.to_topic_id) not in existing_pairs):
+            db.add(TopicDependency(from_topic_id=dep.from_topic_id, to_topic_id=dep.to_topic_id))
+            existing_pairs.add((dep.from_topic_id, dep.to_topic_id))
+
+    db.commit()
+    return {"ok": True}
 
 
 class _QuestionList(BaseModel):
