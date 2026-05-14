@@ -163,6 +163,7 @@ def generate_topics(subject_id: int, db: DB):
         "Returner kun JSON i dette formatet:\n"
         '{"topics": [{"name": "Temanavn", "often_on_exam": true}, ...]}\n'
         "Inkluder 5–12 temaer. Sett often_on_exam til true for temaer som typisk er sentrale på eksamen."
+        "Skriv korrekt norsk, unngå markdown og LaTeX"
     )
 
     message = _anthropic.messages.create(
@@ -191,7 +192,11 @@ def generate_topics(subject_id: int, db: DB):
     return topics
 
 
-@router.post("/topics/{topic_id}/generate-question", response_model=QuestionOut, responses={404: {"description": "Topic not found"}})
+class _QuestionList(BaseModel):
+    questions: list[QuestionOut]
+
+
+@router.post("/topics/{topic_id}/generate-question", response_model=list[QuestionOut], responses={404: {"description": "Topic not found"}})
 def generate_question(topic_id: int, db: DB):
     topic = db.get(Topic, topic_id)
     if not topic:
@@ -203,20 +208,24 @@ def generate_question(topic_id: int, db: DB):
         f"Du er en pedagogisk assistent som lager eksamensoppgaver.\n"
         f"Emne: {subject.name}\n"
         f"Tema: {topic.name}\n\n"
-        "Lag ett flervalgsspørsmål med fire svaralternativer. Kun ett alternativ er riktig.\n"
+        "Lag 6 ulike flervalgsspørsmål med fire svaralternativer hver. Kun ett alternativ er riktig per spørsmål.\n"
         "Returner kun JSON i dette formatet:\n"
-        '{"question": "...", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "..."}\n'
+        '{"questions": [{"question": "...", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "..."}, ...]}\n'
         "correct_index er 0-basert indeks for det riktige alternativet."
+        "For matematiske spørsmål: vis utregningen steg for steg i explanation-feltet, "
+        "og bekreft eksplisitt hvilket alternativ som er riktig.\n"
+        "Viktig: dobbeltsjekk at correct_index peker på riktig alternativ i options-listen før du returnerer JSON."
+        "Skriv korrekt norsk, unngå markdown og LaTeX"
     )
 
     message = _anthropic.messages.create(
         model=LLM_MODEL,
-        max_tokens=1024,
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
 
     raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return QuestionOut.model_validate_json(raw)
+    return _QuestionList.model_validate_json(raw).questions
 
 
 @router.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})
