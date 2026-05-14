@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { authFetch, clearToken } from '../api'
 
 function StatusPill({ count, label, color }) {
   return (
@@ -18,7 +19,7 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('/api/subjects')
+        const res = await authFetch('/api/subjects')
         if (!res.ok) throw new Error('Kunne ikke hente emner')
         setSubjects(await res.json())
       } catch (err) {
@@ -50,12 +51,20 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50 p-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Mine emner</h1>
-        <button
-          onClick={() => navigate('/')}
-          className="bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 transition-colors"
-        >
-          + Nytt emne
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/')}
+            className="bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            + Nytt emne
+          </button>
+          <button
+            onClick={() => { clearToken(); navigate('/login') }}
+            className="border border-gray-300 text-gray-500 rounded-lg px-4 py-2 text-sm font-medium hover:border-gray-400 transition-colors"
+          >
+            Logg ut
+          </button>
+        </div>
       </div>
 
       {subjects.length === 0 ? (

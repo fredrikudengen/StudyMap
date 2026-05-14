@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { authFetch } from '../api'
 
 function statusLabel(lastResult) {
   if (!lastResult) return { label: 'Ikke testet', color: 'bg-gray-100 text-gray-500' }
@@ -22,16 +23,16 @@ export default function TopicsPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/topics?subject_id=${id}`)
+      const res = await authFetch(`/api/topics?subject_id=${id}`)
       if (!res.ok) throw new Error('Kunne ikke hente temaer')
       const data = await res.json()
 
       if (data.length === 0) {
-        const genRes = await fetch(`/api/subjects/${id}/generate-topics`, { method: 'POST' })
+        const genRes = await authFetch(`/api/subjects/${id}/generate-topics`, { method: 'POST' })
         if (!genRes.ok && genRes.status !== 409) throw new Error('Kunne ikke generere temaer')
 
         if (genRes.status === 409) {
-          const retry = await fetch(`/api/topics?subject_id=${id}`)
+          const retry = await authFetch(`/api/topics?subject_id=${id}`)
           if (!retry.ok) throw new Error('Kunne ikke hente temaer')
           setTopics(await retry.json())
         } else {
@@ -60,7 +61,7 @@ export default function TopicsPage() {
     try {
       const form = new FormData()
       form.append('file', file)
-      const res = await fetch(`/api/subjects/${id}/analyze-exam`, { method: 'POST', body: form })
+      const res = await authFetch(`/api/subjects/${id}/analyze-exam`, { method: 'POST', body: form })
       if (!res.ok) throw new Error('Kunne ikke analysere eksamen')
       await loadTopics()
     } catch (err) {

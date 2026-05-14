@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { authFetch } from '../api'
 
 function optionStyle(index, selectedIndex, correctIndex) {
   if (selectedIndex === null) {
@@ -26,7 +27,7 @@ export default function TestPage() {
   useEffect(() => {
     async function loadQuestions() {
       try {
-        const res = await fetch(`/api/topics/${topicId}/generate-question`, { method: 'POST' })
+        const res = await authFetch(`/api/topics/${topicId}/generate-question`, { method: 'POST' })
         if (!res.ok) throw new Error('Kunne ikke generere spørsmål')
         setQuestions(await res.json())
       } catch (err) {
@@ -45,7 +46,7 @@ export default function TestPage() {
 
     const score = optionIndex === questions[currentIndex].correct_index ? 1 : 0
     try {
-      const res = await fetch('/api/test-results', {
+      const res = await authFetch('/api/test-results', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic_id: Number(topicId), score, flagged_by_user: false }),
@@ -59,7 +60,7 @@ export default function TestPage() {
   async function handleFlag() {
     if (!resultId || flagged) return
     try {
-      await fetch(`/api/test-results/${resultId}`, {
+      await authFetch(`/api/test-results/${resultId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ flagged_by_user: true }),

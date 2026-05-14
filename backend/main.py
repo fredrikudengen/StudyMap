@@ -7,27 +7,75 @@ from typing import Annotated
 
 import anthropic
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 from pydantic import BaseModel
 from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Subject, TestResult, Topic, TopicDependency
+from models import Subject, TestResult, Topic, TopicDependency, User
 
-DB = Annotated[Session, Depends(get_db)]
+# ---------- Config ----------
 
-app = FastAPI(title="StudyMap API")
-
-HARDCODED_USER_ID = 1
 LLM_MODEL = "claude-sonnet-4-20250514"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-do-not-use-in-production")
+ALGORITHM = "HS256"
 
 _anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+_bearer = HTTPBearer(auto_error=False)
+_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+app = FastAPI(title="StudyMap API")
 router = APIRouter(prefix="/api")
+auth_router = APIRouter(prefix="/api/auth")
+
+# ---------- Auth helpers ----------
+
+def _make_token(user_id: int) -> str:
+    exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)
+    return jwt.encode({"sub": str(user_id), "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+DB = Annotated[Session, Depends(get_db)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 # ---------- Schemas ----------
+
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
 
 class SubjectIn(BaseModel):
     name: str
@@ -129,16 +177,40 @@ class _ExamAnalysis(BaseModel):
     dependencies: list[_DepPair]
 
 
-# ---------- Endpoints ----------
+class _QuestionList(BaseModel):
+    questions: list[QuestionOut]
+
+
+# ---------- Auth endpoints ----------
+
+@auth_router.post("/register", response_model=TokenOut, status_code=201)
+def register(body: RegisterIn, db: DB):
+    if db.scalars(select(User).where(User.email == body.email)).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    user = User(email=body.email, password_hash=_pwd.hash(body.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return TokenOut(access_token=_make_token(user.id))
+
+
+@auth_router.post("/login", response_model=TokenOut)
+def login(body: LoginIn, db: DB):
+    user = db.scalars(select(User).where(User.email == body.email)).first()
+    if not user or not _pwd.verify(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return TokenOut(access_token=_make_token(user.id))
+
+
+# ---------- Protected endpoints ----------
 
 @router.post("/test-results", response_model=TestResultOut, status_code=201, responses={404: {"description": "Topic not found"}})
-def create_test_result(body: TestResultIn, db: DB):
+def create_test_result(body: TestResultIn, db: DB, user: CurrentUser):
     if not db.get(Topic, body.topic_id):
         raise HTTPException(status_code=404, detail="Topic not found")
-
     result = TestResult(
         topic_id=body.topic_id,
-        user_id=HARDCODED_USER_ID,
+        user_id=user.id,
         score=body.score,
         flagged_by_user=body.flagged_by_user,
     )
@@ -149,30 +221,29 @@ def create_test_result(body: TestResultIn, db: DB):
 
 
 @router.patch("/test-results/{result_id}", response_model=TestResultOut, responses={404: {"description": "TestResult not found"}})
-def flag_test_result(result_id: int, body: TestResultFlagIn, db: DB):
+def flag_test_result(result_id: int, body: TestResultFlagIn, db: DB, user: CurrentUser):
     result = db.get(TestResult, result_id)
     if not result:
         raise HTTPException(status_code=404, detail="TestResult not found")
-
+    if result.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
     result.flagged_by_user = body.flagged_by_user
     if body.flagged_by_user:
         result.score = 1.0
-
     db.commit()
     db.refresh(result)
     return result
 
 
 @router.post("/subjects", response_model=SubjectOut, status_code=201)
-def create_subject(body: SubjectIn, db: DB, response: Response):
+def create_subject(body: SubjectIn, db: DB, response: Response, user: CurrentUser):
     existing = db.scalars(
-        select(Subject).where(Subject.user_id == HARDCODED_USER_ID, Subject.name == body.name)
+        select(Subject).where(Subject.user_id == user.id, Subject.name == body.name)
     ).first()
     if existing:
         response.status_code = 200
         return existing
-
-    subject = Subject(name=body.name, exam_date=body.exam_date, user_id=HARDCODED_USER_ID)
+    subject = Subject(name=body.name, exam_date=body.exam_date, user_id=user.id)
     db.add(subject)
     db.commit()
     db.refresh(subject)
@@ -180,8 +251,8 @@ def create_subject(body: SubjectIn, db: DB, response: Response):
 
 
 @router.get("/subjects", response_model=list[SubjectWithStatusOut])
-def get_subjects(db: DB):
-    subjects = db.scalars(select(Subject).where(Subject.user_id == HARDCODED_USER_ID)).all()
+def get_subjects(db: DB, user: CurrentUser):
+    subjects = db.scalars(select(Subject).where(Subject.user_id == user.id)).all()
     if not subjects:
         return []
 
@@ -193,7 +264,7 @@ def get_subjects(db: DB):
     if topic_ids:
         max_ts_subq = (
             select(TestResult.topic_id, func.max(TestResult.timestamp).label("max_ts"))
-            .where(TestResult.user_id == HARDCODED_USER_ID, TestResult.topic_id.in_(topic_ids))
+            .where(TestResult.user_id == user.id, TestResult.topic_id.in_(topic_ids))
             .group_by(TestResult.topic_id)
             .subquery()
         )
@@ -234,10 +305,12 @@ def get_subjects(db: DB):
 
 
 @router.post("/subjects/{subject_id}/generate-topics", response_model=list[TopicOut], status_code=201, responses={404: {"description": "Subject not found"}})
-def generate_topics(subject_id: int, db: DB):
+def generate_topics(subject_id: int, db: DB, user: CurrentUser):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     prompt = (
         f"Du er en pedagogisk assistent. Generer en liste med temaer for emnet '{subject.name}'.\n"
@@ -256,28 +329,28 @@ def generate_topics(subject_id: int, db: DB):
     raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     parsed = _TopicList.model_validate_json(raw)
 
-    topics = [
-        Topic(name=s.name, often_on_exam=s.often_on_exam, subject_id=subject_id)
-        for s in parsed.topics
-    ]
-
     existing = db.query(Topic).filter(Topic.subject_id == subject_id).first()
     if existing:
         raise HTTPException(status_code=409, detail="Topics already generated for this subject")
 
+    topics = [
+        Topic(name=s.name, often_on_exam=s.often_on_exam, subject_id=subject_id)
+        for s in parsed.topics
+    ]
     db.add_all(topics)
     db.commit()
     for t in topics:
         db.refresh(t)
-
     return topics
 
 
 @router.post("/subjects/{subject_id}/analyze-exam", status_code=200, responses={404: {"description": "Subject not found"}, 400: {"description": "Bad request"}})
-async def analyze_exam(subject_id: int, db: DB, file: UploadFile = File(...)):
+async def analyze_exam(subject_id: int, db: DB, user: CurrentUser, file: UploadFile = File(...)):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     topics = db.scalars(select(Topic).where(Topic.subject_id == subject_id)).all()
     if not topics:
@@ -335,17 +408,14 @@ async def analyze_exam(subject_id: int, db: DB, file: UploadFile = File(...)):
     return {"ok": True}
 
 
-class _QuestionList(BaseModel):
-    questions: list[QuestionOut]
-
-
 @router.post("/topics/{topic_id}/generate-question", response_model=list[QuestionOut], responses={404: {"description": "Topic not found"}})
-def generate_question(topic_id: int, db: DB):
+def generate_question(topic_id: int, db: DB, user: CurrentUser):
     topic = db.get(Topic, topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
-
     subject = db.get(Subject, topic.subject_id)
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     prompt = (
         f"Du er en pedagogisk assistent som lager eksamensoppgaver.\n"
@@ -372,16 +442,15 @@ def generate_question(topic_id: int, db: DB):
 
 
 @router.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})
-def get_topics(subject_id: int, db: DB):
+def get_topics(subject_id: int, db: DB, user: CurrentUser):
     if not db.get(Subject, subject_id):
         raise HTTPException(status_code=404, detail="Subject not found")
 
     topics = db.scalars(select(Topic).where(Topic.subject_id == subject_id)).all()
 
-    # One query: latest TestResult per topic for this user
     max_ts_subq = (
         select(TestResult.topic_id, func.max(TestResult.timestamp).label("max_ts"))
-        .where(TestResult.user_id == HARDCODED_USER_ID)
+        .where(TestResult.user_id == user.id)
         .group_by(TestResult.topic_id)
         .subquery()
     )
@@ -419,5 +488,6 @@ def get_topics(subject_id: int, db: DB):
         for t in sorted_topics
     ]
 
-app.include_router(router)
 
+app.include_router(auth_router)
+app.include_router(router)

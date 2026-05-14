@@ -15,6 +15,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
 
     subjects: Mapped[list["Subject"]] = relationship(back_populates="user")
     test_results: Mapped[list["TestResult"]] = relationship(back_populates="user")
