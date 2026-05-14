@@ -6,6 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 
+function topicBorderColor(lastResult) {
+  if (!lastResult) return 'hsl(var(--border))'
+  if (lastResult.flagged_by_user) return '#fb923c'
+  if (lastResult.score === 1) return '#4ade80'
+  return '#f87171'
+}
+
 function StatusBadge({ lastResult }) {
   if (!lastResult) return <Badge variant="outline" className="bg-secondary text-muted-foreground border-border">Ikke testet</Badge>
   if (lastResult.flagged_by_user) return <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">Flagget</Badge>
@@ -121,7 +128,7 @@ export default function TopicsPage() {
         <ul className="flex flex-col gap-2.5">
           {topics.map(topic => (
             <li key={topic.id}>
-              <Card>
+              <Card className="border-l-[3px]" style={{ borderLeftColor: topicBorderColor(topic.last_result) }}>
                 <CardContent className="flex items-center justify-between px-4 py-3">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{topic.name}</span>

@@ -75,7 +75,10 @@ export default function DashboardPage() {
                     onClick={() => navigate(`/subjects/${subject.id}/topics`)}
                     className="w-full text-left"
                   >
-                    <Card className="hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+                    <Card
+                      className="hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 border-l-[3px]"
+                      style={{ borderLeftColor: 'hsl(var(--primary))' }}
+                    >
                       <CardContent className="px-5 py-4">
                         <div className="flex items-start justify-between gap-4">
                           <div>
@@ -89,11 +92,22 @@ export default function DashboardPage() {
                           <span className="text-xs text-muted-foreground shrink-0">{total} temaer</span>
                         </div>
                         {total > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mt-3">
-                            {kan_godt > 0 && <StatusPill count={kan_godt} label="kan godt" className="bg-green-50 text-green-700 border-green-200" />}
-                            {usikker > 0 && <StatusPill count={usikker} label="usikker" className="bg-red-50 text-red-600 border-red-200" />}
-                            {ikke_testet > 0 && <StatusPill count={ikke_testet} label="ikke testet" className="bg-secondary text-muted-foreground border-border" />}
-                          </div>
+                          <>
+                            <div className="flex flex-wrap gap-1.5 mt-3">
+                              {kan_godt > 0 && <StatusPill count={kan_godt} label="kan godt" className="bg-green-50 text-green-700 border-green-200" />}
+                              {usikker > 0 && <StatusPill count={usikker} label="usikker" className="bg-red-50 text-red-600 border-red-200" />}
+                              {ikke_testet > 0 && <StatusPill count={ikke_testet} label="ikke testet" className="bg-secondary text-muted-foreground border-border" />}
+                            </div>
+                            <div className="mt-3 h-1 bg-secondary rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.round((kan_godt / total) * 100)}%`,
+                                  backgroundColor: 'hsl(var(--primary))',
+                                }}
+                              />
+                            </div>
+                          </>
                         )}
                       </CardContent>
                     </Card>

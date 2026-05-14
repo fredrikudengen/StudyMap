@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 export default function Navbar() {
   const navigate = useNavigate()
   return (
-    <nav className="bg-card border-b border-border px-6 h-14 flex items-center justify-between shrink-0">
+    <nav className="bg-card shadow-[0_1px_4px_rgba(0,0,0,0.06)] px-6 h-14 flex items-center justify-between shrink-0 z-10">
       <button
         onClick={() => navigate('/dashboard')}
         className="text-lg font-bold text-primary tracking-tight hover:opacity-80 transition-opacity"

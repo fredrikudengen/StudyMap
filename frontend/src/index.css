@@ -4,35 +4,38 @@
 
 @layer base {
   :root {
-    /* #f8fafc as base background (slate-50) */
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    /* Warm off-white base */
+    --background: 40 25% 98%;
+    --foreground: 220 40% 10%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 220 40% 10%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover-foreground: 220 40% 10%;
 
-    /* Indigo-600 (#4f46e5) as primary */
-    --primary: 243 75% 59%;
+    /* Deep teal primary (~teal-600 #0d9488) */
+    --primary: 173 72% 36%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
+    /* Warm light gray secondary */
+    --secondary: 40 20% 95%;
+    --secondary-foreground: 220 40% 10%;
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --muted: 40 20% 95%;
+    --muted-foreground: 220 13% 46%;
 
-    --accent: 210 40% 93%;
-    --accent-foreground: 222 47% 11%;
+    /* Soft teal tint for hover states */
+    --accent: 172 40% 92%;
+    --accent-foreground: 220 40% 10%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 243 75% 59%;
+    /* Warm light borders */
+    --border: 40 15% 89%;
+    --input: 40 15% 89%;
+    --ring: 173 72% 36%;
 
     --radius: 0.625rem;
   }
@@ -45,4 +48,13 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+}
+
+@keyframes glow-breathe {
+  0%, 100% { opacity: 0.18; transform: scale(1); }
+  50% { opacity: 0.28; transform: scale(1.08); }
+}
+
+.animate-glow {
+  animation: glow-breathe 5s ease-in-out infinite;
 }
