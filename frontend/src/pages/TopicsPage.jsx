@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { authFetch } from '../api'
+import Navbar from '../components/Navbar'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 
-function statusLabel(lastResult) {
-  if (!lastResult) return { label: 'Ikke testet', color: 'bg-gray-100 text-gray-500' }
-  if (lastResult.flagged_by_user) return { label: 'Flagget', color: 'bg-orange-100 text-orange-600' }
-  if (lastResult.score === 1) return { label: 'Kan godt', color: 'bg-green-100 text-green-700' }
-  return { label: 'Usikker', color: 'bg-red-100 text-red-600' }
+function StatusBadge({ lastResult }) {
+  if (!lastResult) return <Badge variant="outline" className="bg-secondary text-muted-foreground border-border">Ikke testet</Badge>
+  if (lastResult.flagged_by_user) return <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">Flagget</Badge>
+  if (lastResult.score === 1) return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Kan godt</Badge>
+  return <Badge variant="outline" className="bg-red-50 text-red-600 border-red-200">Usikker</Badge>
 }
 
 export default function TopicsPage() {
@@ -30,7 +34,6 @@ export default function TopicsPage() {
       if (data.length === 0) {
         const genRes = await authFetch(`/api/subjects/${id}/generate-topics`, { method: 'POST' })
         if (!genRes.ok && genRes.status !== 409) throw new Error('Kunne ikke generere temaer')
-
         if (genRes.status === 409) {
           const retry = await authFetch(`/api/topics?subject_id=${id}`)
           if (!retry.ok) throw new Error('Kunne ikke hente temaer')
@@ -55,7 +58,6 @@ export default function TopicsPage() {
     const file = e.target.files[0]
     if (!file) return
     e.target.value = ''
-
     setAnalyzing(true)
     setError(null)
     try {
@@ -73,77 +75,74 @@ export default function TopicsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-3">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        <p className="text-gray-500 text-sm">Henter temaer...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        <p className="text-muted-foreground text-sm">Henter temaer...</p>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-red-600">{error}</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-destructive">{error}</p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Temaer</h1>
-        <div className="flex items-center gap-2">
-          {analyzing && (
-            <div className="flex items-center gap-1.5 text-sm text-gray-500">
-              <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-              Analyserer eksamen...
-            </div>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={handleFileUpload}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={analyzing}
-            className="text-sm border border-gray-300 text-gray-600 rounded-lg px-3 py-1.5 hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            Last opp gammel eksamen
-          </button>
+    <div className="min-h-screen flex flex-col">
+      <Navbar />
+      <div className="max-w-2xl mx-auto w-full px-6 py-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')} className="text-muted-foreground -ml-2">
+              ← Mine emner
+            </Button>
+            <h1 className="text-2xl font-bold">Temaer</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {analyzing && (
+              <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                Analyserer...
+              </div>
+            )}
+            <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileUpload} />
+            <Button variant="outline" size="sm" onClick={() => navigate(`/subjects/${id}/graph`)}>
+              Graf
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={analyzing}>
+              Last opp eksamen
+            </Button>
+          </div>
         </div>
-      </div>
 
-      <ul className="flex flex-col gap-3">
-        {topics.map(topic => {
-          const { label, color } = statusLabel(topic.last_result)
-          return (
-            <li key={topic.id} className="bg-white rounded-xl shadow-sm px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{topic.name}</span>
-                {topic.often_on_exam && (
-                  <span className="text-xs bg-yellow-100 text-yellow-700 rounded px-1.5 py-0.5">
-                    Ofte på eksamen
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-medium rounded-full px-2.5 py-1 ${color}`}>
-                  {label}
-                </span>
-                <button
-                  onClick={() => navigate(`/subjects/${id}/topic/${topic.id}/test`)}
-                  className="text-xs bg-blue-600 text-white rounded-lg px-3 py-1.5 font-medium hover:bg-blue-700 transition-colors"
-                >
-                  Test
-                </button>
-              </div>
+        <ul className="flex flex-col gap-2.5">
+          {topics.map(topic => (
+            <li key={topic.id}>
+              <Card>
+                <CardContent className="flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm">{topic.name}</span>
+                    {topic.often_on_exam && (
+                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                        Ofte på eksamen
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge lastResult={topic.last_result} />
+                    <Button size="sm" onClick={() => navigate(`/subjects/${id}/topic/${topic.id}/test`)}>
+                      Test
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </li>
-          )
-        })}
-      </ul>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }

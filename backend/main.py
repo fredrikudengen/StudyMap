@@ -188,6 +188,49 @@ class _QuestionList(BaseModel):
     questions: list[QuestionOut]
 
 
+class FreetextQuestionOut(BaseModel):
+    question: str
+
+
+class FreetextEvalIn(BaseModel):
+    topic_id: int
+    question: str
+    user_answer: str
+
+
+class FreetextEvalOut(BaseModel):
+    score: float
+    feedback: str
+    result_id: int
+
+
+class _FreetextEval(BaseModel):
+    score: float
+    feedback: str
+
+
+class GraphTopicOut(BaseModel):
+    id: int
+    name: str
+    status: str
+
+
+class GraphEdgeOut(BaseModel):
+    id: int
+    from_topic_id: int
+    to_topic_id: int
+
+
+class GraphOut(BaseModel):
+    topics: list[GraphTopicOut]
+    dependencies: list[GraphEdgeOut]
+
+
+class DependencyIn(BaseModel):
+    from_topic_id: int
+    to_topic_id: int
+
+
 # ---------- Auth endpoints ----------
 
 @auth_router.post("/register", response_model=TokenOut, status_code=201)
@@ -309,6 +352,96 @@ def get_subjects(db: DB, user: CurrentUser):
             topic_counts=TopicStatusCount(**counts),
         ))
     return out
+
+
+@router.get("/subjects/{subject_id}/graph", response_model=GraphOut, responses={404: {"description": "Subject not found"}})
+def get_graph(subject_id: int, db: DB, user: CurrentUser):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    topics = db.scalars(select(Topic).where(Topic.subject_id == subject_id)).all()
+    topic_ids = [t.id for t in topics]
+
+    latest_by_topic: dict[int, TestResult] = {}
+    if topic_ids:
+        max_ts_subq = (
+            select(TestResult.topic_id, func.max(TestResult.timestamp).label("max_ts"))
+            .where(TestResult.user_id == user.id, TestResult.topic_id.in_(topic_ids))
+            .group_by(TestResult.topic_id)
+            .subquery()
+        )
+        latest_rows = db.scalars(
+            select(TestResult).join(
+                max_ts_subq,
+                (TestResult.topic_id == max_ts_subq.c.topic_id)
+                & (TestResult.timestamp == max_ts_subq.c.max_ts),
+            )
+        ).all()
+        latest_by_topic = {r.topic_id: r for r in latest_rows}
+
+    def _node_status(topic: Topic) -> str:
+        result = latest_by_topic.get(topic.id)
+        if result is None:
+            return "ikke_testet"
+        if result.score == 1 and not result.flagged_by_user:
+            return "kan_godt"
+        return "usikker"
+
+    deps = db.scalars(
+        select(TopicDependency).where(TopicDependency.from_topic_id.in_(topic_ids))
+    ).all()
+
+    return GraphOut(
+        topics=[GraphTopicOut(id=t.id, name=t.name, status=_node_status(t)) for t in topics],
+        dependencies=[GraphEdgeOut(id=d.id, from_topic_id=d.from_topic_id, to_topic_id=d.to_topic_id) for d in deps],
+    )
+
+
+@router.post("/subjects/{subject_id}/graph/dependencies", response_model=GraphEdgeOut, status_code=201)
+def add_dependency(subject_id: int, body: DependencyIn, db: DB, user: CurrentUser):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    topic_ids = set(db.scalars(select(Topic.id).where(Topic.subject_id == subject_id)).all())
+
+    if body.from_topic_id not in topic_ids or body.to_topic_id not in topic_ids:
+        raise HTTPException(status_code=400, detail="Topics do not belong to this subject")
+    if body.from_topic_id == body.to_topic_id:
+        raise HTTPException(status_code=400, detail="Self-reference not allowed")
+
+    existing = db.scalars(
+        select(TopicDependency).where(
+            TopicDependency.from_topic_id == body.from_topic_id,
+            TopicDependency.to_topic_id == body.to_topic_id,
+        )
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Dependency already exists")
+
+    dep = TopicDependency(from_topic_id=body.from_topic_id, to_topic_id=body.to_topic_id)
+    db.add(dep)
+    db.commit()
+    db.refresh(dep)
+    return GraphEdgeOut(id=dep.id, from_topic_id=dep.from_topic_id, to_topic_id=dep.to_topic_id)
+
+
+@router.delete("/topic-dependencies/{dependency_id}", status_code=204)
+def delete_dependency(dependency_id: int, db: DB, user: CurrentUser):
+    dep = db.get(TopicDependency, dependency_id)
+    if not dep:
+        raise HTTPException(status_code=404, detail="Dependency not found")
+    topic = db.get(Topic, dep.from_topic_id)
+    subject = db.get(Subject, topic.subject_id)
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    db.delete(dep)
+    db.commit()
 
 
 @router.post("/subjects/{subject_id}/generate-topics", response_model=list[TopicOut], status_code=201, responses={404: {"description": "Subject not found"}})
@@ -446,6 +579,82 @@ def generate_question(topic_id: int, db: DB, user: CurrentUser):
 
     raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return _QuestionList.model_validate_json(raw).questions
+
+
+@router.post("/topics/{topic_id}/generate-freetext-question", response_model=FreetextQuestionOut, responses={404: {"description": "Topic not found"}})
+def generate_freetext_question(topic_id: int, db: DB, user: CurrentUser):
+    topic = db.get(Topic, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    subject = db.get(Subject, topic.subject_id)
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    prompt = (
+        f"Du er en pedagogisk assistent som lager eksamensoppgaver.\n"
+        f"Emne: {subject.name}\n"
+        f"Tema: {topic.name}\n\n"
+        "Lag ett åpent spørsmål som krever en skriftlig forklaring (ikke bare ett ord eller ett tall). "
+        "Spørsmålet bør teste forståelse, ikke bare hukommelse.\n"
+        "Returner kun JSON i dette formatet:\n"
+        '{"question": "..."}\n'
+        "Skriv korrekt norsk, unngå markdown og LaTeX."
+    )
+
+    message = _anthropic.messages.create(
+        model=LLM_MODEL,
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return FreetextQuestionOut.model_validate_json(raw)
+
+
+@router.post("/test-results/evaluate-freetext", response_model=FreetextEvalOut, responses={404: {"description": "Topic not found"}})
+def evaluate_freetext(body: FreetextEvalIn, db: DB, user: CurrentUser):
+    topic = db.get(Topic, body.topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    subject = db.get(Subject, topic.subject_id)
+    if subject.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    prompt = (
+        f"Du er en streng, men rettferdig sensor.\n"
+        f"Emne: {subject.name}\n"
+        f"Tema: {topic.name}\n\n"
+        f"Spørsmål: {body.question}\n\n"
+        f"Studentens svar: {body.user_answer}\n\n"
+        "Evaluer svaret og gi en score:\n"
+        "- 1.0 = Riktig eller tilstrekkelig fullstendig\n"
+        "- 0.5 = Delvis riktig (mangler viktige elementer, men viser forståelse)\n"
+        "- 0.0 = Feil eller for svakt\n\n"
+        "Returner kun JSON i dette formatet:\n"
+        '{"score": 0.5, "feedback": "Kort tilbakemelding på norsk (1-3 setninger)"}\n'
+        "Skriv korrekt norsk."
+    )
+
+    message = _anthropic.messages.create(
+        model=LLM_MODEL,
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    eval_result = _FreetextEval.model_validate_json(raw)
+
+    result = TestResult(
+        topic_id=body.topic_id,
+        user_id=user.id,
+        score=eval_result.score,
+        flagged_by_user=False,
+    )
+    db.add(result)
+    db.commit()
+    db.refresh(result)
+
+    return FreetextEvalOut(score=eval_result.score, feedback=eval_result.feedback, result_id=result.id)
 
 
 @router.get("/topics", response_model=list[TopicWithStatusOut], responses={404: {"description": "Subject not found"}})

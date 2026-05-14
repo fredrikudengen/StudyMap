@@ -1,31 +1,55 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { authFetch } from '../api'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+
+const FT_TOTAL = 3
 
 function optionStyle(index, selectedIndex, correctIndex) {
   if (selectedIndex === null) {
-    return 'border-gray-200 bg-white hover:border-blue-400 hover:bg-blue-50 cursor-pointer'
+    return 'border-border bg-card hover:border-indigo-400 hover:bg-indigo-50 cursor-pointer'
   }
   if (index === correctIndex) return 'border-green-500 bg-green-50 text-green-800'
   if (index === selectedIndex) return 'border-red-400 bg-red-50 text-red-800'
-  return 'border-gray-200 bg-white text-gray-400'
+  return 'border-border bg-card text-muted-foreground'
+}
+
+function scoreLabel(score) {
+  if (score === 1) return { text: 'Riktig', cls: 'text-green-700 bg-green-50 border-green-300' }
+  if (score === 0.5) return { text: 'Delvis riktig', cls: 'text-yellow-700 bg-yellow-50 border-yellow-300' }
+  return { text: 'Feil', cls: 'text-red-700 bg-red-50 border-red-300' }
 }
 
 export default function TestPage() {
   const { subjectId, topicId } = useParams()
   const navigate = useNavigate()
 
+  const [mode, setMode] = useState('mc')
+
+  // MC state
   const [questions, setQuestions] = useState([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [selectedIndex, setSelectedIndex] = useState(null)
-  const [resultId, setResultId] = useState(null)
-  const [flagged, setFlagged] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [mcResultId, setMcResultId] = useState(null)
+  const [mcFlagged, setMcFlagged] = useState(false)
+  const [mcLoading, setMcLoading] = useState(true)
+  const [mcSaving, setMcSaving] = useState(false)
+
+  // Freetext state
+  const [ftQuestion, setFtQuestion] = useState(null)
+  const [ftAnswer, setFtAnswer] = useState('')
+  const [ftEval, setFtEval] = useState(null)
+  const [ftCount, setFtCount] = useState(1)
+  const [ftResultId, setFtResultId] = useState(null)
+  const [ftFlagged, setFtFlagged] = useState(false)
+  const [ftLoading, setFtLoading] = useState(false)
+  const [ftSubmitting, setFtSubmitting] = useState(false)
+
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    async function loadQuestions() {
+    async function loadMcQuestions() {
       try {
         const res = await authFetch(`/api/topics/${topicId}/generate-question`, { method: 'POST' })
         if (!res.ok) throw new Error('Kunne ikke generere spørsmål')
@@ -33,15 +57,84 @@ export default function TestPage() {
       } catch (err) {
         setError(err.message)
       } finally {
-        setLoading(false)
+        setMcLoading(false)
       }
     }
-    loadQuestions()
+    loadMcQuestions()
   }, [topicId])
 
-  async function handleSelect(optionIndex) {
-    if (selectedIndex !== null || saving) return
-    setSaving(true)
+  async function loadFtQuestion() {
+    setFtLoading(true)
+    setFtQuestion(null)
+    setFtAnswer('')
+    setFtEval(null)
+    setFtResultId(null)
+    setFtFlagged(false)
+    try {
+      const res = await authFetch(`/api/topics/${topicId}/generate-freetext-question`, { method: 'POST' })
+      if (!res.ok) throw new Error('Kunne ikke generere spørsmål')
+      const data = await res.json()
+      setFtQuestion(data.question)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setFtLoading(false)
+    }
+  }
+
+  function switchMode(newMode) {
+    if (newMode === mode) return
+    setMode(newMode)
+    if (newMode === 'freetext' && ftQuestion === null && !ftLoading) {
+      setFtCount(1)
+      loadFtQuestion()
+    }
+  }
+
+  async function handleFtSubmit() {
+    if (!ftAnswer.trim() || ftSubmitting) return
+    setFtSubmitting(true)
+    try {
+      const res = await authFetch('/api/test-results/evaluate-freetext', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: Number(topicId), question: ftQuestion, user_answer: ftAnswer }),
+      })
+      if (!res.ok) throw new Error('Kunne ikke evaluere svar')
+      const data = await res.json()
+      setFtEval(data)
+      setFtResultId(data.result_id)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setFtSubmitting(false)
+    }
+  }
+
+  async function handleFtFlag() {
+    if (!ftResultId || ftFlagged) return
+    try {
+      await authFetch(`/api/test-results/${ftResultId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flagged_by_user: true }),
+      })
+      setFtFlagged(true)
+    } catch {}
+  }
+
+  function handleFtNext() {
+    if (ftCount >= FT_TOTAL) {
+      navigate(`/subjects/${subjectId}/topics`)
+    } else {
+      setFtCount(c => c + 1)
+      loadFtQuestion()
+    }
+  }
+
+  async function handleMcSelect(optionIndex) {
+    if (selectedIndex !== null || mcSaving) return
+    setMcSaving(true)
     setSelectedIndex(optionIndex)
 
     const score = optionIndex === questions[currentIndex].correct_index ? 1 : 0
@@ -51,105 +144,193 @@ export default function TestPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic_id: Number(topicId), score, flagged_by_user: false }),
       })
-      if (res.ok) setResultId((await res.json()).id)
+      if (res.ok) setMcResultId((await res.json()).id)
     } catch {}
 
-    setSaving(false)
+    setMcSaving(false)
   }
 
-  async function handleFlag() {
-    if (!resultId || flagged) return
+  async function handleMcFlag() {
+    if (!mcResultId || mcFlagged) return
     try {
-      await authFetch(`/api/test-results/${resultId}`, {
+      await authFetch(`/api/test-results/${mcResultId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ flagged_by_user: true }),
       })
-      setFlagged(true)
+      setMcFlagged(true)
     } catch {}
   }
 
-  function handleNext() {
+  function handleMcNext() {
     if (currentIndex === questions.length - 1) {
       navigate(`/subjects/${subjectId}/topics`)
     } else {
       setCurrentIndex(i => i + 1)
       setSelectedIndex(null)
-      setResultId(null)
-      setFlagged(false)
+      setMcResultId(null)
+      setMcFlagged(false)
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-3">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        <p className="text-gray-500 text-sm">Genererer spørsmål...</p>
-      </div>
-    )
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-red-600">{error}</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-destructive">{error}</p>
       </div>
     )
   }
 
-  const question = questions[currentIndex]
-  const answered = selectedIndex !== null
-  const isLast = currentIndex === questions.length - 1
+  const modeToggle = (
+    <div className="flex gap-1 bg-secondary rounded-lg p-1 mb-6">
+      <button
+        onClick={() => switchMode('mc')}
+        className={`flex-1 text-sm font-medium py-1.5 rounded-md transition-colors ${mode === 'mc' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      >
+        Flervalg
+      </button>
+      <button
+        onClick={() => switchMode('freetext')}
+        className={`flex-1 text-sm font-medium py-1.5 rounded-md transition-colors ${mode === 'freetext' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+      >
+        Fritekst
+      </button>
+    </div>
+  )
+
+  // MC mode
+  if (mode === 'mc') {
+    if (mcLoading) {
+      return (
+        <div className="min-h-screen p-6 max-w-2xl mx-auto">
+          {modeToggle}
+          <div className="flex flex-col items-center gap-3 mt-20">
+            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            <p className="text-muted-foreground text-sm">Genererer spørsmål...</p>
+          </div>
+        </div>
+      )
+    }
+
+    const question = questions[currentIndex]
+    const answered = selectedIndex !== null
+    const isLast = currentIndex === questions.length - 1
+
+    return (
+      <div className="min-h-screen p-6 max-w-2xl mx-auto">
+        {modeToggle}
+        <div className="flex items-center justify-between mb-6">
+          <p className="text-sm text-muted-foreground">Spørsmål {currentIndex + 1} av {questions.length}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleMcFlag}
+            disabled={!answered || mcFlagged}
+            className={mcFlagged ? 'border-orange-300 bg-orange-50 text-orange-600 hover:bg-orange-50' : 'text-muted-foreground hover:border-orange-300 hover:text-orange-500'}
+          >
+            {mcFlagged ? 'Flagget' : 'Flagg spørsmål'}
+          </Button>
+        </div>
+
+        <Card className="mb-4">
+          <CardContent className="p-6">
+            <p className="text-lg font-medium mb-6">{question.question}</p>
+            <ul className="flex flex-col gap-3">
+              {question.options.map((option, i) => (
+                <li key={i}>
+                  <button
+                    onClick={() => handleMcSelect(i)}
+                    disabled={answered}
+                    className={`w-full text-left border-2 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${optionStyle(i, selectedIndex, question.correct_index)}`}
+                  >
+                    {option}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+
+        {answered && (
+          <Card className="mb-4">
+            <CardContent className="p-5">
+              <p className="text-sm font-semibold text-foreground mb-1">Forklaring</p>
+              <p className="text-sm text-muted-foreground">{question.explanation}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {answered && (
+          <Button className="w-full" onClick={handleMcNext}>
+            {isLast ? 'Gå tilbake til temaer' : 'Neste spørsmål'}
+          </Button>
+        )}
+      </div>
+    )
+  }
+
+  // Freetext mode
+  const { text: scoreText, cls: scoreClass } = ftEval ? scoreLabel(ftEval.score) : {}
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <p className="text-sm text-gray-400">Spørsmål {currentIndex + 1} av {questions.length}</p>
-        <button
-          onClick={handleFlag}
-          disabled={!answered || flagged}
-          className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${
-            flagged
-              ? 'border-orange-300 bg-orange-50 text-orange-600'
-              : 'border-gray-200 text-gray-400 hover:border-orange-300 hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed'
-          }`}
-        >
-          {flagged ? 'Flagget' : 'Flagg spørsmål'}
-        </button>
-      </div>
+    <div className="min-h-screen p-6 max-w-2xl mx-auto">
+      {modeToggle}
 
-      <div className="bg-white rounded-2xl shadow-sm p-6 mb-4">
-        <p className="text-lg font-medium mb-6">{question.question}</p>
-
-        <ul className="flex flex-col gap-3">
-          {question.options.map((option, i) => (
-            <li key={i}>
-              <button
-                onClick={() => handleSelect(i)}
-                disabled={answered}
-                className={`w-full text-left border-2 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${optionStyle(i, selectedIndex, question.correct_index)}`}
-              >
-                {option}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {answered && (
-        <div className="bg-white rounded-2xl shadow-sm p-5 mb-4">
-          <p className="text-sm font-semibold text-gray-700 mb-1">Forklaring</p>
-          <p className="text-sm text-gray-600">{question.explanation}</p>
+      {ftLoading || !ftQuestion ? (
+        <div className="flex flex-col items-center gap-3 mt-20">
+          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-muted-foreground text-sm">Genererer spørsmål...</p>
         </div>
-      )}
+      ) : (
+        <>
+          <div className="flex items-center justify-between mb-6">
+            <p className="text-sm text-muted-foreground">Spørsmål {ftCount} av {FT_TOTAL}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleFtFlag}
+              disabled={!ftEval || ftFlagged}
+              className={ftFlagged ? 'border-orange-300 bg-orange-50 text-orange-600 hover:bg-orange-50' : 'text-muted-foreground hover:border-orange-300 hover:text-orange-500'}
+            >
+              {ftFlagged ? 'Flagget' : 'Flagg spørsmål'}
+            </Button>
+          </div>
 
-      {answered && (
-        <button
-          onClick={handleNext}
-          className="w-full bg-blue-600 text-white rounded-xl px-4 py-3 font-medium hover:bg-blue-700 transition-colors"
-        >
-          {isLast ? 'Gå tilbake til temaer' : 'Neste spørsmål'}
-        </button>
+          <Card className="mb-4">
+            <CardContent className="p-6">
+              <p className="text-lg font-medium mb-4">{ftQuestion}</p>
+              <textarea
+                value={ftAnswer}
+                onChange={e => setFtAnswer(e.target.value)}
+                disabled={!!ftEval}
+                placeholder="Skriv svaret ditt her..."
+                rows={5}
+                className="w-full border border-input bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-ring focus-visible:ring-1 focus-visible:ring-ring disabled:bg-secondary disabled:text-muted-foreground transition-colors"
+              />
+            </CardContent>
+          </Card>
+
+          {ftEval && (
+            <div className={`rounded-xl border p-5 mb-4 ${scoreClass}`}>
+              <p className="text-sm font-semibold mb-1">{scoreText}</p>
+              <p className="text-sm">{ftEval.feedback}</p>
+            </div>
+          )}
+
+          {!ftEval ? (
+            <Button
+              className="w-full"
+              onClick={handleFtSubmit}
+              disabled={!ftAnswer.trim() || ftSubmitting}
+            >
+              {ftSubmitting ? 'Evaluerer...' : 'Send inn svar'}
+            </Button>
+          ) : (
+            <Button className="w-full" onClick={handleFtNext}>
+              {ftCount >= FT_TOTAL ? 'Gå tilbake til temaer' : 'Neste spørsmål'}
+            </Button>
+          )}
+        </>
       )}
     </div>
   )
