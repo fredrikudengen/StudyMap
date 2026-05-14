@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { authFetch } from '../api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -24,6 +24,9 @@ function scoreLabel(score) {
 export default function TestPage() {
   const { subjectId, topicId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const topicName = location.state?.topicName ?? null
+  const subjectName = location.state?.subjectName ?? null
 
   const [mode, setMode] = useState('mc')
 
@@ -181,6 +184,13 @@ export default function TestPage() {
     )
   }
 
+  const topicHeader = (topicName || subjectName) && (
+    <div className="mb-5">
+      {subjectName && <p className="text-xs text-muted-foreground mb-0.5">{subjectName}</p>}
+      {topicName && <h2 className="text-lg font-semibold">{topicName}</h2>}
+    </div>
+  )
+
   const modeToggle = (
     <div className="flex gap-1 bg-secondary rounded-lg p-1 mb-6">
       <button
@@ -203,6 +213,7 @@ export default function TestPage() {
     if (mcLoading) {
       return (
         <div className="min-h-screen p-6 max-w-2xl mx-auto">
+          {topicHeader}
           {modeToggle}
           <div className="flex flex-col items-center gap-3 mt-20">
             <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -218,6 +229,7 @@ export default function TestPage() {
 
     return (
       <div className="min-h-screen p-6 max-w-2xl mx-auto">
+        {topicHeader}
         {modeToggle}
         <div className="flex items-center justify-between mb-6">
           <p className="text-sm text-muted-foreground">Spørsmål {currentIndex + 1} av {questions.length}</p>
@@ -274,6 +286,7 @@ export default function TestPage() {
 
   return (
     <div className="min-h-screen p-6 max-w-2xl mx-auto">
+      {topicHeader}
       {modeToggle}
 
       {ftLoading || !ftQuestion ? (

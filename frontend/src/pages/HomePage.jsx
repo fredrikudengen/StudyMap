@@ -11,6 +11,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [examDate, setExamDate] = useState('')
+  const [curriculumText, setCurriculumText] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -26,7 +27,9 @@ export default function HomePage() {
       })
       if (!res.ok) throw new Error('Kunne ikke opprette emne')
       const subject = await res.json()
-      navigate(`/subjects/${subject.id}/topics`)
+      navigate(`/subjects/${subject.id}/topics`, {
+        state: { curriculum_text: curriculumText.trim() || null },
+      })
     } catch (err) {
       setError(err.message)
     } finally {
@@ -65,6 +68,20 @@ export default function HomePage() {
                   type="date"
                   value={examDate}
                   onChange={(e) => setExamDate(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="curriculum">
+                  Pensumoversikt{' '}
+                  <span className="text-muted-foreground font-normal">(valgfritt)</span>
+                </Label>
+                <textarea
+                  id="curriculum"
+                  value={curriculumText}
+                  onChange={(e) => setCurriculumText(e.target.value)}
+                  placeholder="Lim inn læringsutbytte, pensumliste eller emnebeskrivelse..."
+                  rows={5}
+                  className="w-full border border-input bg-background rounded-md px-3 py-2 text-sm placeholder:text-muted-foreground resize-y focus:outline-none focus-visible:ring-1 focus-visible:ring-ring transition-colors"
                 />
               </div>
               {error && <p className="text-destructive text-sm">{error}</p>}
