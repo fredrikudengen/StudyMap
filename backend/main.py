@@ -470,17 +470,46 @@ def get_topics(subject_id: int, db: DB, user: CurrentUser):
     ).all()
     latest_by_topic: dict[int, TestResult] = {r.topic_id: r for r in latest_rows}
 
-    _epoch = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    # Sort order (ascending tuple → lowest = highest priority):
+    #
+    # 0 — Never tested. Tiebreak: topic.id ascending (oldest topic first, as
+    #     a proxy for creation order since IDs are auto-incremented).
+    #
+    # 1 — Tested, last score = 0 (wrong). Tiebreak: oldest test first, so
+    #     topics that have been wrong and sitting idle the longest rise highest.
+    #
+    # 2 — Tested, flagged by user (user disagreed with LLM answer). Tiebreak:
+    #     oldest test first.
+    #
+    # 3 — Mastered (score = 1) AND the spaced-repetition interval has elapsed
+    #     (MASTERY_INTERVAL_DAYS days since last test). Ready for review.
+    #     Tiebreak: oldest test first, so topics not reviewed in the longest
+    #     time are prioritised within this group.
+    #
+    # 4 — Mastered (score = 1) AND still within the suppression window. These
+    #     topics were recently answered correctly and do not need immediate
+    #     attention; they float to the bottom.
 
-    def _sort_key(topic: Topic) -> tuple[int, datetime.datetime]:
+    MASTERY_INTERVAL_DAYS = 3
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def _sort_key(topic: Topic) -> tuple[int, int]:
         result = latest_by_topic.get(topic.id)
         if result is None:
-            return (0, _epoch)
+            return (0, topic.id)
+
+        ts = result.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=datetime.timezone.utc)
+        ts_unix = int(ts.timestamp())
+
         if result.score == 0:
-            return (1, result.timestamp)
+            return (1, ts_unix)
         if result.flagged_by_user:
-            return (2, result.timestamp)
-        return (3, result.timestamp)
+            return (2, ts_unix)
+        if (now - ts).days >= MASTERY_INTERVAL_DAYS:
+            return (3, ts_unix)
+        return (4, ts_unix)
 
     sorted_topics = sorted(topics, key=_sort_key)
 
