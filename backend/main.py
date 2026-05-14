@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated
 
 import anthropic
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -15,14 +15,13 @@ from models import Subject, TestResult, Topic
 DB = Annotated[Session, Depends(get_db)]
 
 app = FastAPI(title="StudyMap API")
-router = APIRouter(prefix="/api")
 
 HARDCODED_USER_ID = 1
 LLM_MODEL = "claude-sonnet-4-20250514"
 
 _anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-app.include_router(router)
+router = APIRouter(prefix="/api")
 
 
 # ---------- Schemas ----------
@@ -138,7 +137,14 @@ def flag_test_result(result_id: int, body: TestResultFlagIn, db: DB):
 
 
 @router.post("/subjects", response_model=SubjectOut, status_code=201)
-def create_subject(body: SubjectIn, db: DB):
+def create_subject(body: SubjectIn, db: DB, response: Response):
+    existing = db.scalars(
+        select(Subject).where(Subject.user_id == HARDCODED_USER_ID, Subject.name == body.name)
+    ).first()
+    if existing:
+        response.status_code = 200
+        return existing
+
     subject = Subject(name=body.name, exam_date=body.exam_date, user_id=HARDCODED_USER_ID)
     db.add(subject)
     db.commit()
@@ -260,3 +266,6 @@ def get_topics(subject_id: int, db: DB):
         )
         for t in sorted_topics
     ]
+
+app.include_router(router)
+
