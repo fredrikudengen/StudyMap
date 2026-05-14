@@ -26,7 +26,7 @@ export default function HomePage() {
       if (!res.ok) throw new Error('Kunne ikke opprette emne')
 
       const subject = await res.json()
-      navigate(`/subjects/${subject.id}/topics`)
+      navigate('/dashboard')
     } catch (err) {
       setError(err.message)
     } finally {

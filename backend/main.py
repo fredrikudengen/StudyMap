@@ -40,6 +40,20 @@ class SubjectOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TopicStatusCount(BaseModel):
+    kan_godt: int
+    usikker: int
+    ikke_testet: int
+
+
+class SubjectWithStatusOut(BaseModel):
+    id: int
+    name: str
+    exam_date: date | None
+    user_id: int
+    topic_counts: TopicStatusCount
+
+
 class TopicOut(BaseModel):
     id: int
     name: str
@@ -150,6 +164,60 @@ def create_subject(body: SubjectIn, db: DB, response: Response):
     db.commit()
     db.refresh(subject)
     return subject
+
+
+@router.get("/subjects", response_model=list[SubjectWithStatusOut])
+def get_subjects(db: DB):
+    subjects = db.scalars(select(Subject).where(Subject.user_id == HARDCODED_USER_ID)).all()
+    if not subjects:
+        return []
+
+    subject_ids = [s.id for s in subjects]
+    topics = db.scalars(select(Topic).where(Topic.subject_id.in_(subject_ids))).all()
+    topic_ids = [t.id for t in topics]
+
+    latest_by_topic: dict[int, TestResult] = {}
+    if topic_ids:
+        max_ts_subq = (
+            select(TestResult.topic_id, func.max(TestResult.timestamp).label("max_ts"))
+            .where(TestResult.user_id == HARDCODED_USER_ID, TestResult.topic_id.in_(topic_ids))
+            .group_by(TestResult.topic_id)
+            .subquery()
+        )
+        latest_rows = db.scalars(
+            select(TestResult).join(
+                max_ts_subq,
+                (TestResult.topic_id == max_ts_subq.c.topic_id)
+                & (TestResult.timestamp == max_ts_subq.c.max_ts),
+            )
+        ).all()
+        latest_by_topic = {r.topic_id: r for r in latest_rows}
+
+    topics_by_subject: dict[int, list[Topic]] = {}
+    for topic in topics:
+        topics_by_subject.setdefault(topic.subject_id, []).append(topic)
+
+    def _status(topic: Topic) -> str:
+        result = latest_by_topic.get(topic.id)
+        if result is None:
+            return "ikke_testet"
+        if result.score == 1 and not result.flagged_by_user:
+            return "kan_godt"
+        return "usikker"
+
+    out = []
+    for subject in subjects:
+        counts = {"kan_godt": 0, "usikker": 0, "ikke_testet": 0}
+        for topic in topics_by_subject.get(subject.id, []):
+            counts[_status(topic)] += 1
+        out.append(SubjectWithStatusOut(
+            id=subject.id,
+            name=subject.name,
+            exam_date=subject.exam_date,
+            user_id=subject.user_id,
+            topic_counts=TopicStatusCount(**counts),
+        ))
+    return out
 
 
 @router.post("/subjects/{subject_id}/generate-topics", response_model=list[TopicOut], status_code=201, responses={404: {"description": "Subject not found"}})
