@@ -17,6 +17,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Existing users have no password — wipe all user data before adding the NOT NULL column.
+    # CASCADE removes dependent rows (subjects, topics, test_results) automatically.
+    op.execute("TRUNCATE TABLE users CASCADE")
     op.add_column("users", sa.Column("password_hash", sa.String(), nullable=False))
 
 

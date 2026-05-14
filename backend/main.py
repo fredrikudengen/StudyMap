@@ -9,7 +9,7 @@ import anthropic
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from pydantic import BaseModel
 from pypdf import PdfReader
 from sqlalchemy import func, select
@@ -26,7 +26,14 @@ ALGORITHM = "HS256"
 
 _anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 _bearer = HTTPBearer(auto_error=False)
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _hash_password(password: str) -> str:
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(password.encode(), hashed.encode())
 
 app = FastAPI(title="StudyMap API")
 router = APIRouter(prefix="/api")
@@ -187,7 +194,7 @@ class _QuestionList(BaseModel):
 def register(body: RegisterIn, db: DB):
     if db.scalars(select(User).where(User.email == body.email)).first():
         raise HTTPException(status_code=409, detail="Email already registered")
-    user = User(email=body.email, password_hash=_pwd.hash(body.password))
+    user = User(email=body.email, password_hash=_hash_password(body.password))
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -197,7 +204,7 @@ def register(body: RegisterIn, db: DB):
 @auth_router.post("/login", response_model=TokenOut)
 def login(body: LoginIn, db: DB):
     user = db.scalars(select(User).where(User.email == body.email)).first()
-    if not user or not _pwd.verify(body.password, user.password_hash):
+    if not user or not _verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return TokenOut(access_token=_make_token(user.id))
 
