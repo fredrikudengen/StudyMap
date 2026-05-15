@@ -7,6 +7,7 @@ from typing import Annotated
 
 import anthropic
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 import bcrypt as _bcrypt
@@ -36,6 +37,15 @@ def _verify_password(password: str, hashed: str) -> bool:
     return _bcrypt.checkpw(password.encode(), hashed.encode())
 
 app = FastAPI(title="StudyMap API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://studiekart.onrender.com",
+        "http://localhost:5173",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 router = APIRouter(prefix="/api")
 auth_router = APIRouter(prefix="/api/auth")
 
