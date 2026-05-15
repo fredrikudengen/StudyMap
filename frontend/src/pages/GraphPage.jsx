@@ -13,7 +13,7 @@ import '@xyflow/react/dist/style.css'
 import dagre from '@dagrejs/dagre'
 import { authFetch } from '../api'
 
-const NODE_W = 160
+const NODE_W = 180
 const NODE_H = 60
 
 const STATUS_COLOR = {
@@ -28,7 +28,7 @@ const EDGE_SELECTED = '#3b82f6'
 function applyDagreLayout(nodes, edges) {
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 })
+  g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 60 })
 
   nodes.forEach(node => g.setNode(node.id, { width: NODE_W, height: NODE_H }))
   edges.forEach(edge => g.setEdge(edge.source, edge.target))
@@ -228,6 +228,7 @@ export default function GraphPage() {
         onPaneClick={onPaneClick}
         deleteKeyCode={null}
         fitView
+        fitViewOptions={{ padding: 0.2 }}
       >
         <Background variant="dots" color="#cbd5e1" gap={20} size={1} />
         <Controls />
