@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from auth import auth_router
 from routers import subjects, test_results, topics
 
-app = FastAPI(title="StudyMap API")
+app = FastAPI(title="StudieKart API")
 
 app.add_middleware(
     CORSMiddleware,

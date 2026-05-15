@@ -10,7 +10,7 @@ export default function Navbar() {
         onClick={() => navigate('/dashboard')}
         className="text-lg font-bold text-primary tracking-tight hover:opacity-80 transition-opacity"
       >
-        StudyMap
+        StudieKart
       </button>
       <Button
         variant="ghost"

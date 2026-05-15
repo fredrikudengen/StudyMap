@@ -43,7 +43,7 @@ export default function LandingPage() {
 
       {/* Hero */}
       <div className="relative text-center text-white max-w-lg mb-14">
-        <h1 className="text-5xl font-extrabold tracking-tight mb-4">StudyMap</h1>
+        <h1 className="text-5xl font-extrabold tracking-tight mb-4">StudieKart</h1>
         <p className="text-teal-100 text-lg leading-relaxed mb-10">
           Kartlegg hva du kan og hva du trenger å øve mer på.
           Adaptive tester og emneoversikt i ett.
