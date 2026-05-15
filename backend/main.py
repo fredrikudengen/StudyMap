@@ -170,6 +170,14 @@ class QuestionOut(BaseModel):
     explanation: str
 
 
+class _QuestionRaw(BaseModel):
+    question: str
+    options: list[str]
+    correct_index: int
+    reasoning: str
+    explanation: str
+
+
 class TestResultFlagIn(BaseModel):
     flagged_by_user: bool
 
@@ -205,7 +213,7 @@ class AnalyzeExamOut(BaseModel):
 
 
 class _QuestionList(BaseModel):
-    questions: list[QuestionOut]
+    questions: list[_QuestionRaw]
 
 
 class FreetextQuestionOut(BaseModel):
@@ -684,13 +692,17 @@ def generate_question(topic_id: int, db: DB, user: CurrentUser):
         f"Emne: {subject.name}\n"
         f"Tema: {topic.name}\n\n"
         "Lag 6 ulike flervalgsspørsmål med fire svaralternativer hver. Kun ett alternativ er riktig per spørsmål.\n"
+        "Hvert spørsmål skal ha to felt:\n"
+        "- reasoning: din interne steg-for-steg-verifisering. Gå gjennom hvert alternativ og bekreft at "
+        "correct_index peker på det eneste riktige svaret. Bruk dette feltet til å tenke høyt og unngå feil.\n"
+        "- explanation: en kort, pedagogisk forklaring skrevet direkte til studenten (2-3 setninger). "
+        "Forklar hvorfor det riktige svaret er riktig. Ikke bruk 'La oss sjekke'- eller oppramsings-stil — "
+        "skriv som om du forklarer konseptet til en student som nettopp svarte feil.\n\n"
         "Returner kun JSON i dette formatet:\n"
-        '{"questions": [{"question": "...", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "..."}, ...]}\n'
-        "correct_index er 0-basert indeks for det riktige alternativet."
-        "For matematiske spørsmål: vis utregningen steg for steg i explanation-feltet, "
-        "og bekreft eksplisitt hvilket alternativ som er riktig.\n"
-        "Viktig: dobbeltsjekk at correct_index peker på riktig alternativ i options-listen før du returnerer JSON."
-        "Skriv korrekt norsk, unngå markdown og LaTeX"
+        '{"questions": [{"question": "...", "options": ["A", "B", "C", "D"], "correct_index": 0, '
+        '"reasoning": "Alternativ A er riktig fordi ... B er feil fordi ...", '
+        '"explanation": "..."}, ...]}\n'
+        "correct_index er 0-basert. Skriv korrekt norsk, unngå markdown og LaTeX."
     )
 
     message = _anthropic.messages.create(
@@ -700,7 +712,10 @@ def generate_question(topic_id: int, db: DB, user: CurrentUser):
     )
 
     raw = message.content[0].text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return _QuestionList.model_validate_json(raw).questions
+    return [
+        QuestionOut(question=q.question, options=q.options, correct_index=q.correct_index, explanation=q.explanation)
+        for q in _QuestionList.model_validate_json(raw).questions
+    ]
 
 
 @router.post("/topics/{topic_id}/generate-freetext-question", response_model=FreetextQuestionOut, responses={404: {"description": "Topic not found"}})

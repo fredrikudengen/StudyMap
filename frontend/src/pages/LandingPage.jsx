@@ -5,7 +5,7 @@ const FEATURES = [
   {
     number: '01',
     title: 'Adaptive tester',
-    desc: 'Starter alltid med det du ikke kan. Temaer du mestrer hviler automatisk.',
+    desc: 'Starter alltid med det du ikke kan.',
   },
   {
     number: '02',
@@ -15,7 +15,7 @@ const FEATURES = [
   {
     number: '03',
     title: 'Spaced repetition',
-    desc: 'Kun temaer som trenger øving dukker opp — ikke de du allerede sitter trygt på.',
+    desc: 'Kun temaer som trenger øving dukker.',
   },
 ]
 
